@@ -6,8 +6,14 @@ from app.core.constants import (
     DEFAULT_BOX_SCALE,
     DEFAULT_CONF_THRESHOLD,
     DEFAULT_IOU_THRESHOLD,
+    DEFAULT_VIDEO_MATCH_DISTANCE_RATIO,
+    DEFAULT_VIDEO_MATCH_IOU_THRESHOLD,
+    DEFAULT_VIDEO_MIN_TRACK_FRAMES,
+    DEFAULT_VIDEO_OBJECT_CONSISTENCY_FRAMES,
     DEFAULT_SCREEN_SCANS_PER_SECOND,
     INFER_INPUT_SIZE,
+    MAX_VIDEO_OBJECT_CONSISTENCY_FRAMES,
+    MIN_VIDEO_OBJECT_CONSISTENCY_FRAMES,
     NUDENET_CLASSES,
 )
 
@@ -43,3 +49,32 @@ class ScreenSettings:
     def interval_ms(self) -> int:
         value = max(1, self.scans_per_second)
         return max(1, int(1000 / value))
+
+
+@dataclass(frozen=True)
+class VideoConsistencySettings:
+    object_consistency_frames: int = DEFAULT_VIDEO_OBJECT_CONSISTENCY_FRAMES
+    min_track_frames: int = DEFAULT_VIDEO_MIN_TRACK_FRAMES
+    match_iou_threshold: float = DEFAULT_VIDEO_MATCH_IOU_THRESHOLD
+    match_distance_ratio: float = DEFAULT_VIDEO_MATCH_DISTANCE_RATIO
+
+    @property
+    def enabled(self) -> bool:
+        return self.object_consistency_frames > 0
+
+    def validate(self) -> None:
+        if not (
+            MIN_VIDEO_OBJECT_CONSISTENCY_FRAMES
+            <= self.object_consistency_frames
+            <= MAX_VIDEO_OBJECT_CONSISTENCY_FRAMES
+        ):
+            raise ValueError(
+                "Object consistency frames must be in "
+                f"[{MIN_VIDEO_OBJECT_CONSISTENCY_FRAMES}, {MAX_VIDEO_OBJECT_CONSISTENCY_FRAMES}]."
+            )
+        if self.min_track_frames < 1:
+            raise ValueError("Minimum track frames must be >= 1.")
+        if not 0.0 <= self.match_iou_threshold <= 1.0:
+            raise ValueError("Video match IoU threshold must be in [0.0, 1.0].")
+        if not 0.0 <= self.match_distance_ratio <= 1.0:
+            raise ValueError("Video match distance ratio must be in [0.0, 1.0].")

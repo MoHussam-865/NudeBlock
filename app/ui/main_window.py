@@ -42,9 +42,12 @@ from app.core.constants import (
     DEFAULT_CONF_THRESHOLD,
     DEFAULT_IOU_THRESHOLD,
     DEFAULT_SCREEN_SCANS_PER_SECOND,
+    DEFAULT_VIDEO_OBJECT_CONSISTENCY_FRAMES,
+    MAX_VIDEO_OBJECT_CONSISTENCY_FRAMES,
+    MIN_VIDEO_OBJECT_CONSISTENCY_FRAMES,
     NUDENET_CLASSES,
 )
-from app.core.settings import DetectionSettings, ScreenSettings
+from app.core.settings import DetectionSettings, ScreenSettings, VideoConsistencySettings
 from app.services.detection_service import DetectionService
 from app.services.image_service import ImageService
 from app.ui.screen_overlay import ScreenOverlay
@@ -236,6 +239,27 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(trim_group)
 
+        consistency_group = QGroupBox("Object consistency (video only)")
+        consistency_layout = QFormLayout(consistency_group)
+
+        self.video_object_consistency_spin = QSpinBox()
+        self.video_object_consistency_spin.setRange(
+            MIN_VIDEO_OBJECT_CONSISTENCY_FRAMES,
+            MAX_VIDEO_OBJECT_CONSISTENCY_FRAMES,
+        )
+        self.video_object_consistency_spin.setValue(DEFAULT_VIDEO_OBJECT_CONSISTENCY_FRAMES)
+        self.video_object_consistency_spin.setToolTip(
+            "Maximum missed frames to bridge for the same object."
+        )
+        consistency_layout.addRow("Gap tolerance (frames)", self.video_object_consistency_spin)
+
+        consistency_hint = QLabel(
+            "At 30 FPS, 30 frames is about 1 second. Use 0 to disable consistency."
+        )
+        consistency_hint.setWordWrap(True)
+        consistency_layout.addRow("", consistency_hint)
+        layout.addWidget(consistency_group)
+
         actions = QHBoxLayout()
         self.video_start_btn = QPushButton("Start processing")
         self.video_start_btn.clicked.connect(self._start_video_processing)
@@ -318,6 +342,11 @@ class MainWindow(QMainWindow):
 
     def _build_screen_settings(self) -> ScreenSettings:
         return ScreenSettings(scans_per_second=int(self.screen_rate_spin.value()))
+
+    def _build_video_consistency_settings(self) -> VideoConsistencySettings:
+        return VideoConsistencySettings(
+            object_consistency_frames=int(self.video_object_consistency_spin.value())
+        )
 
     # -----------------------------------------------------------------
     # Image feature
@@ -434,6 +463,7 @@ class MainWindow(QMainWindow):
 
         try:
             settings = self._build_detection_settings()
+            video_consistency = self._build_video_consistency_settings()
         except ValueError as exc:
             QMessageBox.warning(self, APP_NAME, str(exc))
             return
@@ -464,6 +494,7 @@ class MainWindow(QMainWindow):
             input_path,
             output_path,
             settings,
+            video_consistency,
             start_time_sec=trim_start_sec,
             end_time_sec=trim_end_sec,
         )
