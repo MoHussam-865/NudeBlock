@@ -1,0 +1,1 @@
+"""NudeBlock desktop application package."""

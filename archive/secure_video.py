@@ -1,7 +1,7 @@
 import cv2
 import time
 import onnxruntime as ort
-from tiling import detect_tiled
+from archive.tiling import detect_tiled
 import os
 import time
 

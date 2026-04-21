@@ -26,7 +26,7 @@ from PyQt6.QtCore import QRect, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QBrush, QColor, QPainter
 from PyQt6.QtWidgets import QApplication, QWidget
 
-from tiling import detect_tiled
+from archive.tiling import detect_tiled
 
 # ──────────────────────────────────────────────────────────────────────
 # 1.  Configuration
