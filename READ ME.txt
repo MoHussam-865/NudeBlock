@@ -1,0 +1,7 @@
+uses onnx model to find body parts and block nudes by black squares
+
+block_image.py: hide nudes on image 
+
+secure_video.py: takes a video and output a video with hidden nude (no voice)
+
+nudeblock.py: when run on the pc it watch the screen and block nudes at real time

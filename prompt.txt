@@ -1,0 +1,25 @@
+we will use the current code to build a desktop app with GUI
+first you need to review the code 
+
+the app will have 3 features secure image, secure video, secure screen
+
+the first takes image and block some detected classes by the model nudenet_v8.onnx
+the secound takes video and review it frame by frame and block classes as above 
+the third capture te screen live and block the detected classes 
+
+review files secure_image.py, secure_video.py, secure_screen.py for more info 
+
+then first create .md file for documentation of how those files work
+another .md file to always start with that has the rules that must be followed during
+the development of this software like use design pattern always make clear comments
+create .md file in the docs folder to summarize each step create requerments.txt file to add
+all dependancies needed for the project and always add to it if need dependancy needed
+
+and create a .md file of the plan of how will you create and develope the program mentioning the packages you will need and why
+
+
+note that the following options must be in the program
+1- let the user choose what classes to block in all the 3 features 
+2- let the user decide how many times to process the screen in the secure_screen feature
+3- let the user decide the confidence (sensitivity) of the model of when to block
+

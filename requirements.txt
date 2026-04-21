@@ -1,0 +1,14 @@
+# Core numerical and computer-vision dependencies
+numpy>=1.26,<3.0
+opencv-python>=4.10,<5.0
+
+# ONNX inference runtime
+# For NVIDIA GPU systems, replace onnxruntime with onnxruntime-gpu.
+onnxruntime>=1.19,<2.0
+
+# Desktop GUI
+PyQt6>=6.7,<7.0
+
+# Screen capture and optional global hotkeys used by the current prototype
+mss>=9.0,<11.0
+keyboard>=0.13,<1.0
