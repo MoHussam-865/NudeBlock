@@ -110,11 +110,9 @@ class VideoWorker(QThread):
             end_frame = int(round(max(0.0, end_time_sec) * fps))
 
         if total_frames > 0:
-            if start_frame >= total_frames:
+            if end_frame is not None and start_frame >= total_frames:
                 raise RuntimeError("Trim start time is beyond the video duration.")
-            if end_frame is None:
-                end_frame = total_frames
-            else:
+            if end_frame is not None:
                 end_frame = min(end_frame, total_frames)
 
         if end_frame is not None and end_frame <= start_frame:
@@ -162,6 +160,9 @@ class VideoWorker(QThread):
                 if frames_to_process > 0:
                     progress = int((processed / frames_to_process) * 100)
                     self.progress_changed.emit(min(100, progress))
+
+            if processed == 0:
+                raise RuntimeError("No frames were read from input video in the selected range.")
 
             if not self._running:
                 self.status_changed.emit("Video processing stopped.")

@@ -8,6 +8,8 @@ DEFAULT_CONF_THRESHOLD = 0.25
 DEFAULT_IOU_THRESHOLD = 0.45
 DEFAULT_BOX_SCALE = 1.0
 DEFAULT_SCREEN_SCANS_PER_SECOND = 8
+# Keep previous boxes for a few empty detections to avoid screen flicker.
+DEFAULT_SCREEN_BOX_HOLD_FRAMES = 8
 
 # Video-only temporal consistency defaults.
 # Maximum consecutive missed frames allowed before a track is retired.

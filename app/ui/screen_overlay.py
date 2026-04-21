@@ -6,11 +6,15 @@ from PyQt6.QtCore import QRect, Qt
 from PyQt6.QtGui import QBrush, QColor, QPainter
 from PyQt6.QtWidgets import QWidget
 
+from app.core.constants import DEFAULT_SCREEN_BOX_HOLD_FRAMES
+
 
 class ScreenOverlay(QWidget):
     def __init__(self, monitor: dict):
         super().__init__()
         self._boxes: list[tuple[int, int, int, int]] = []
+        self._empty_streak = 0
+        self._hold_frames = DEFAULT_SCREEN_BOX_HOLD_FRAMES
 
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
@@ -28,10 +32,20 @@ class ScreenOverlay(QWidget):
         )
 
     def set_boxes(self, boxes: list[tuple[int, int, int, int]]) -> None:
-        self._boxes = boxes
-        self.update()
+        if boxes:
+            self._empty_streak = 0
+            if boxes != self._boxes:
+                self._boxes = boxes
+                self.update()
+            return
+
+        self._empty_streak += 1
+        if self._empty_streak >= self._hold_frames and self._boxes:
+            self._boxes = []
+            self.update()
 
     def clear_boxes(self) -> None:
+        self._empty_streak = 0
         self._boxes = []
         self.update()
 
