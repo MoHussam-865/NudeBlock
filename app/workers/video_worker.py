@@ -17,6 +17,7 @@ class _TrackState:
     class_id: int
     last_box: tuple[int, int, int, int]
     last_seen_frame: int
+    last_score: float
     consecutive_hits: int = 1
     confirmed: bool = False
 
@@ -122,14 +123,14 @@ class VideoWorker(QThread):
     def _find_best_detection_match(
         self,
         track: _TrackState,
-        detections: list[tuple[int, int, int, int, int]],
+        detections: list[tuple[int, int, int, int, int, float]],
         unmatched_indices: set[int],
     ) -> int | None:
         best_index: int | None = None
         best_score = -1.0
 
         for idx in unmatched_indices:
-            bx, by, bw, bh, class_id = detections[idx]
+            bx, by, bw, bh, class_id, _score = detections[idx]
             if class_id != track.class_id:
                 continue
 
@@ -147,11 +148,15 @@ class VideoWorker(QThread):
     def _mask_boxes_for_frame(
         self,
         frame_index: int,
-        detections: list[tuple[int, int, int, int, int]],
-    ) -> list[tuple[int, int, int, int]]:
+        detections: list[tuple[int, int, int, int, int, float]],
+    ) -> tuple[
+        list[tuple[int, int, int, int]],
+        list[tuple[int, int, int, int, int, float]],
+    ]:
         mask_boxes: list[tuple[int, int, int, int]] = [
-            (bx, by, bw, bh) for (bx, by, bw, bh, _class_id) in detections
+            (bx, by, bw, bh) for (bx, by, bw, bh, _class_id, _score) in detections
         ]
+        label_detections: list[tuple[int, int, int, int, int, float]] = list(detections)
 
         unmatched_indices = set(range(len(detections)))
         stale_track_ids: set[int] = set()
@@ -167,7 +172,7 @@ class VideoWorker(QThread):
 
             if matched_index is not None:
                 unmatched_indices.remove(matched_index)
-                bx, by, bw, bh, _class_id = detections[matched_index]
+                bx, by, bw, bh, _class_id, score = detections[matched_index]
                 det_box = (bx, by, bw, bh)
 
                 gap = frame_index - track.last_seen_frame
@@ -178,6 +183,7 @@ class VideoWorker(QThread):
 
                 track.last_box = det_box
                 track.last_seen_frame = frame_index
+                track.last_score = score
 
                 if (
                     not track.confirmed
@@ -191,6 +197,7 @@ class VideoWorker(QThread):
             if track.confirmed and missing_frames <= self._max_missing_frames:
                 # Pessimistic mask-hold while waiting for possible reappearance.
                 mask_boxes.append(track.last_box)
+                label_detections.append((*track.last_box, track.class_id, track.last_score))
 
             if track.confirmed:
                 if missing_frames > self._max_missing_frames:
@@ -201,13 +208,14 @@ class VideoWorker(QThread):
                 stale_track_ids.add(track.track_id)
 
         for idx in sorted(unmatched_indices):
-            bx, by, bw, bh, class_id = detections[idx]
+            bx, by, bw, bh, class_id, score = detections[idx]
             self._tracks.append(
                 _TrackState(
                     track_id=self._next_track_id,
                     class_id=class_id,
                     last_box=(bx, by, bw, bh),
                     last_seen_frame=frame_index,
+                    last_score=score,
                 )
             )
             self._next_track_id += 1
@@ -219,7 +227,7 @@ class VideoWorker(QThread):
                 if track.track_id not in stale_track_ids
             ]
 
-        return mask_boxes
+        return mask_boxes, label_detections
 
     def run(self) -> None:
         cap = None
@@ -290,10 +298,14 @@ class VideoWorker(QThread):
                 if not ok:
                     break
 
-                detections = self._detector.detect_boxes_with_classes(frame, self._settings)
-                mask_boxes = self._mask_boxes_for_frame(current_frame, detections)
+                detections = self._detector.detect_boxes_with_details(frame, self._settings)
+                mask_boxes, label_detections = self._mask_boxes_for_frame(current_frame, detections)
                 masked = self._detector.apply_mask(frame, mask_boxes)
-                out.write(masked)
+                if self._settings.show_labels_and_scores:
+                    frame_out = self._detector.draw_labels(masked, label_detections)
+                else:
+                    frame_out = masked
+                out.write(frame_out)
 
                 processed += 1
                 self._emit_progress(processed, frames_to_process)

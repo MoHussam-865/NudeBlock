@@ -171,6 +171,33 @@ def detect_tiled_with_classes(frame: np.ndarray, session, input_name: str,
     list[tuple[int, int, int, int, int]]
         Final (x, y, w, h, class_id) detections clamped to screen bounds.
     """
+    detections = detect_tiled_with_details(
+        frame,
+        session,
+        input_name,
+        model_size,
+        classes_set,
+        conf_thresh,
+        iou_thresh,
+        screen_w,
+        screen_h,
+    )
+    return [(bx, by, bw, bh, class_id) for (bx, by, bw, bh, class_id, _score) in detections]
+
+
+def detect_tiled_with_details(frame: np.ndarray, session, input_name: str,
+                              model_size: int, classes_set: set,
+                              conf_thresh: float, iou_thresh: float,
+                              screen_w: int, screen_h: int):
+    """
+    Split *frame* into overlapping tiles, run inference on each, remap
+    detections to full-frame coordinates, and apply a global NMS pass.
+
+    Returns
+    -------
+    list[tuple[int, int, int, int, int, float]]
+        Final (x, y, w, h, class_id, score) detections clamped to frame bounds.
+    """
     img_h, img_w = frame.shape[:2]
     tiles = compute_tile_grid(img_w, img_h, model_size)
 
@@ -193,7 +220,7 @@ def detect_tiled_with_classes(frame: np.ndarray, session, input_name: str,
         all_class_ids.extend(class_ids)
 
     # Global NMS to merge duplicates from overlapping tiles
-    final_boxes: list[tuple[int, int, int, int, int]] = []
+    final_boxes: list[tuple[int, int, int, int, int, float]] = []
     if all_boxes:
         indices = cv2.dnn.NMSBoxes(all_boxes, all_scores, conf_thresh, iou_thresh)
         if len(indices) > 0:
@@ -204,6 +231,6 @@ def detect_tiled_with_classes(frame: np.ndarray, session, input_name: str,
                 bw = min(bw, screen_w - bx)
                 bh = min(bh, screen_h - by)
                 if bw > 0 and bh > 0:
-                    final_boxes.append((bx, by, bw, bh, all_class_ids[i]))
+                    final_boxes.append((bx, by, bw, bh, all_class_ids[i], all_scores[i]))
 
     return final_boxes

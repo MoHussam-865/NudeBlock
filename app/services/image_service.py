@@ -23,8 +23,12 @@ class ImageService:
         if image is None:
             raise ValueError(f"Could not load image: {image_path}")
 
-        boxes = self._detector.detect_boxes(image, settings)
-        masked = self._detector.apply_mask(image, boxes)
+        detections = self._detector.detect_boxes_with_details(image, settings)
+        boxes = [(bx, by, bw, bh) for (bx, by, bw, bh, _class_id, _score) in detections]
+        if settings.show_labels_and_scores:
+            masked = self._detector.apply_mask_and_labels(image, detections)
+        else:
+            masked = self._detector.apply_mask(image, boxes)
 
         if output_path:
             ok = cv2.imwrite(output_path, masked)

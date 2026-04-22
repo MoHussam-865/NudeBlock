@@ -17,6 +17,7 @@ class DetectionSettings:
     conf_threshold: float = DEFAULT_CONF_THRESHOLD
     iou_threshold: float = DEFAULT_IOU_THRESHOLD
     box_scale: float = DEFAULT_BOX_SCALE
+    show_labels_and_scores: bool = True
     input_size: int = INFER_INPUT_SIZE
     selected_class_ids: frozenset[int] = field(
         default_factory=lambda: frozenset(range(len(NUDENET_CLASSES)))

@@ -112,6 +112,10 @@ class MainWindow(QMainWindow):
         self.screen_rate_spin.setValue(DEFAULT_SCREEN_SCANS_PER_SECOND)
         form_left.addRow("Screen scans per second", self.screen_rate_spin)
 
+        self.show_labels_checkbox = QCheckBox("Show class label and score")
+        self.show_labels_checkbox.setChecked(True)
+        form_left.addRow("Video/Image labels", self.show_labels_checkbox)
+
         settings_layout.addLayout(form_left, stretch=1)
 
         class_panel = QVBoxLayout()
@@ -313,6 +317,7 @@ class MainWindow(QMainWindow):
             conf_threshold=float(self.conf_spin.value()),
             iou_threshold=float(self.iou_spin.value()),
             box_scale=float(self.box_scale_spin.value()) / 100.0,
+            show_labels_and_scores=self.show_labels_checkbox.isChecked(),
             selected_class_ids=selected,
         )
 
