@@ -10,7 +10,7 @@ import onnxruntime as ort
 
 from app.core.constants import MODEL_PATH
 from app.core.settings import DetectionSettings
-from archive.tiling import detect_tiled
+from archive.tiling import detect_tiled_with_classes
 
 
 class DetectionService:
@@ -31,9 +31,17 @@ class DetectionService:
         frame: np.ndarray,
         settings: DetectionSettings,
     ) -> list[tuple[int, int, int, int]]:
+        detections = self.detect_boxes_with_classes(frame, settings)
+        return [(bx, by, bw, bh) for (bx, by, bw, bh, _class_id) in detections]
+
+    def detect_boxes_with_classes(
+        self,
+        frame: np.ndarray,
+        settings: DetectionSettings,
+    ) -> list[tuple[int, int, int, int, int]]:
         settings.validate()
         frame_h, frame_w = frame.shape[:2]
-        boxes = detect_tiled(
+        detections = detect_tiled_with_classes(
             frame,
             self._session,
             self._input_name,
@@ -44,20 +52,25 @@ class DetectionService:
             frame_w,
             frame_h,
         )
-        return self._scale_boxes_from_center(boxes, settings.box_scale, frame_w, frame_h)
+        return self._scale_detections_from_center(
+            detections,
+            settings.box_scale,
+            frame_w,
+            frame_h,
+        )
 
     @staticmethod
-    def _scale_boxes_from_center(
-        boxes: Iterable[tuple[int, int, int, int]],
+    def _scale_detections_from_center(
+        detections: Iterable[tuple[int, int, int, int, int]],
         scale: float,
         frame_w: int,
         frame_h: int,
-    ) -> list[tuple[int, int, int, int]]:
+    ) -> list[tuple[int, int, int, int, int]]:
         if scale <= 1.0:
-            return list(boxes)
+            return list(detections)
 
-        scaled: list[tuple[int, int, int, int]] = []
-        for bx, by, bw, bh in boxes:
+        scaled: list[tuple[int, int, int, int, int]] = []
+        for bx, by, bw, bh, class_id in detections:
             cx = bx + (bw / 2.0)
             cy = by + (bh / 2.0)
 
@@ -70,7 +83,7 @@ class DetectionService:
             y2 = min(frame_h, int(round(cy + half_h)))
 
             if x2 > x1 and y2 > y1:
-                scaled.append((x1, y1, x2 - x1, y2 - y1))
+                scaled.append((x1, y1, x2 - x1, y2 - y1, class_id))
 
         return scaled
 

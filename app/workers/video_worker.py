@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import cv2
 from PyQt6.QtCore import QThread, pyqtSignal
 
@@ -9,11 +11,22 @@ from app.core.settings import DetectionSettings
 from app.services.detection_service import DetectionService
 
 
+@dataclass
+class _TrackState:
+    track_id: int
+    class_id: int
+    last_box: tuple[int, int, int, int]
+    last_seen_frame: int
+    consecutive_hits: int = 1
+    confirmed: bool = False
+
+
 class VideoWorker(QThread):
-    TEMPORAL_WINDOW_SIZE = 5
-    MIN_STABLE_HITS = 2
-    BOX_MATCH_MIN_IOU = 0.35
-    BOX_MATCH_CENTER_RATIO = 0.35
+    TRUE_POSITIVE_CONSECUTIVE_HITS = 10
+    TRACK_LOOKAHEAD_MS = 1000
+    BOX_MATCH_MIN_IOU = 0.20
+    BOX_MATCH_CENTER_RATIO = 0.65
+    BOX_MATCH_MIN_PIXELS = 16.0
 
     progress_changed = pyqtSignal(int)
     status_changed = pyqtSignal(str)
@@ -37,6 +50,9 @@ class VideoWorker(QThread):
         self._start_time_sec = start_time_sec
         self._end_time_sec = end_time_sec
         self._running = True
+        self._tracks: list[_TrackState] = []
+        self._next_track_id = 1
+        self._max_missing_frames = 1
 
     def stop(self) -> None:
         self._running = False
@@ -70,8 +86,12 @@ class VideoWorker(QThread):
             return 0.0
         return float(inter_area / union_area)
 
+    @staticmethod
+    def _box_center(box: tuple[int, int, int, int]) -> tuple[float, float]:
+        return (box[0] + (box[2] / 2.0), box[1] + (box[3] / 2.0))
+
     @classmethod
-    def _boxes_close(
+    def _is_same_object(
         cls,
         box_a: tuple[int, int, int, int],
         box_b: tuple[int, int, int, int],
@@ -79,83 +99,127 @@ class VideoWorker(QThread):
         if cls._box_iou(box_a, box_b) >= cls.BOX_MATCH_MIN_IOU:
             return True
 
-        acx = box_a[0] + (box_a[2] / 2.0)
-        acy = box_a[1] + (box_a[3] / 2.0)
-        bcx = box_b[0] + (box_b[2] / 2.0)
-        bcy = box_b[1] + (box_b[3] / 2.0)
+        acx, acy = cls._box_center(box_a)
+        bcx, bcy = cls._box_center(box_b)
 
         dx = acx - bcx
         dy = acy - bcy
 
         diag_a = (box_a[2] ** 2 + box_a[3] ** 2) ** 0.5
         diag_b = (box_b[2] ** 2 + box_b[3] ** 2) ** 0.5
-        max_center_distance = max(12.0, min(diag_a, diag_b) * cls.BOX_MATCH_CENTER_RATIO)
+        max_center_distance = max(
+            cls.BOX_MATCH_MIN_PIXELS,
+            min(diag_a, diag_b) * cls.BOX_MATCH_CENTER_RATIO,
+        )
 
         return (dx * dx + dy * dy) <= (max_center_distance * max_center_distance)
-
-    @staticmethod
-    def _average_box(
-        boxes: list[tuple[int, int, int, int]],
-    ) -> tuple[int, int, int, int]:
-        count = max(1, len(boxes))
-        x = int(round(sum(box[0] for box in boxes) / count))
-        y = int(round(sum(box[1] for box in boxes) / count))
-        w = max(1, int(round(sum(box[2] for box in boxes) / count)))
-        h = max(1, int(round(sum(box[3] for box in boxes) / count)))
-        return (x, y, w, h)
-
-    @classmethod
-    def _stabilize_window(
-        cls,
-        window_boxes: list[list[tuple[int, int, int, int]]],
-    ) -> list[list[tuple[int, int, int, int]]]:
-        if not window_boxes:
-            return []
-
-        clusters: list[tuple[list[tuple[int, int, int, int]], set[int]]] = []
-
-        for frame_idx, frame_boxes in enumerate(window_boxes):
-            for box in frame_boxes:
-                best_idx = -1
-                best_iou = -1.0
-
-                for idx, (cluster_boxes, _cluster_frames) in enumerate(clusters):
-                    ref_box = cls._average_box(cluster_boxes)
-                    if not cls._boxes_close(box, ref_box):
-                        continue
-
-                    iou = cls._box_iou(box, ref_box)
-                    if iou > best_iou:
-                        best_iou = iou
-                        best_idx = idx
-
-                if best_idx < 0:
-                    clusters.append(([box], {frame_idx}))
-                else:
-                    clusters[best_idx][0].append(box)
-                    clusters[best_idx][1].add(frame_idx)
-
-        stable_boxes: list[tuple[int, int, int, int]] = []
-        for cluster_boxes, cluster_frames in clusters:
-            if len(cluster_frames) >= cls.MIN_STABLE_HITS:
-                stable_boxes.append(cls._average_box(cluster_boxes))
-
-        stabilized = [list(frame_boxes) for frame_boxes in window_boxes]
-        for frame_idx in range(len(stabilized)):
-            for stable_box in stable_boxes:
-                already_present = any(
-                    cls._boxes_close(existing_box, stable_box)
-                    for existing_box in stabilized[frame_idx]
-                )
-                if not already_present:
-                    stabilized[frame_idx].append(stable_box)
-
-        return stabilized
 
     def _emit_progress(self, processed: int, frames_to_process: int) -> None:
         if frames_to_process > 0:
             progress = int((processed / frames_to_process) * 100)
             self.progress_changed.emit(min(100, progress))
+
+    def _find_best_detection_match(
+        self,
+        track: _TrackState,
+        detections: list[tuple[int, int, int, int, int]],
+        unmatched_indices: set[int],
+    ) -> int | None:
+        best_index: int | None = None
+        best_score = -1.0
+
+        for idx in unmatched_indices:
+            bx, by, bw, bh, class_id = detections[idx]
+            if class_id != track.class_id:
+                continue
+
+            det_box = (bx, by, bw, bh)
+            if not self._is_same_object(track.last_box, det_box):
+                continue
+
+            iou = self._box_iou(track.last_box, det_box)
+            if iou > best_score:
+                best_score = iou
+                best_index = idx
+
+        return best_index
+
+    def _mask_boxes_for_frame(
+        self,
+        frame_index: int,
+        detections: list[tuple[int, int, int, int, int]],
+    ) -> list[tuple[int, int, int, int]]:
+        mask_boxes: list[tuple[int, int, int, int]] = [
+            (bx, by, bw, bh) for (bx, by, bw, bh, _class_id) in detections
+        ]
+
+        unmatched_indices = set(range(len(detections)))
+        stale_track_ids: set[int] = set()
+
+        ordered_tracks = sorted(
+            self._tracks,
+            key=lambda track: (track.confirmed, track.consecutive_hits),
+            reverse=True,
+        )
+
+        for track in ordered_tracks:
+            matched_index = self._find_best_detection_match(track, detections, unmatched_indices)
+
+            if matched_index is not None:
+                unmatched_indices.remove(matched_index)
+                bx, by, bw, bh, _class_id = detections[matched_index]
+                det_box = (bx, by, bw, bh)
+
+                gap = frame_index - track.last_seen_frame
+                if gap == 1:
+                    track.consecutive_hits += 1
+                else:
+                    track.consecutive_hits = 1
+
+                track.last_box = det_box
+                track.last_seen_frame = frame_index
+
+                if (
+                    not track.confirmed
+                    and track.consecutive_hits >= self.TRUE_POSITIVE_CONSECUTIVE_HITS
+                ):
+                    track.confirmed = True
+                continue
+
+            missing_frames = frame_index - track.last_seen_frame
+
+            if track.confirmed and missing_frames <= self._max_missing_frames:
+                # Pessimistic mask-hold while waiting for possible reappearance.
+                mask_boxes.append(track.last_box)
+
+            if track.confirmed:
+                if missing_frames > self._max_missing_frames:
+                    stale_track_ids.add(track.track_id)
+            elif missing_frames > 0:
+                # Before confirmation, require uninterrupted detections.
+                # One missed frame resets candidate tracking immediately.
+                stale_track_ids.add(track.track_id)
+
+        for idx in sorted(unmatched_indices):
+            bx, by, bw, bh, class_id = detections[idx]
+            self._tracks.append(
+                _TrackState(
+                    track_id=self._next_track_id,
+                    class_id=class_id,
+                    last_box=(bx, by, bw, bh),
+                    last_seen_frame=frame_index,
+                )
+            )
+            self._next_track_id += 1
+
+        if stale_track_ids:
+            self._tracks = [
+                track
+                for track in self._tracks
+                if track.track_id not in stale_track_ids
+            ]
+
+        return mask_boxes
 
     def run(self) -> None:
         cap = None
@@ -171,6 +235,13 @@ class VideoWorker(QThread):
             fps = cap.get(cv2.CAP_PROP_FPS)
             if fps <= 0:
                 fps = 30.0
+
+            self._tracks = []
+            self._next_track_id = 1
+            self._max_missing_frames = max(
+                1,
+                int(round((self.TRACK_LOOKAHEAD_MS / 1000.0) * fps)),
+            )
 
             total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
@@ -210,8 +281,6 @@ class VideoWorker(QThread):
             self.status_changed.emit("Processing video...")
             processed = 0
             current_frame = start_frame
-            frame_buffer: list = []
-            boxes_buffer: list[list[tuple[int, int, int, int]]] = []
 
             while self._running:
                 if end_frame is not None and current_frame >= end_frame:
@@ -221,36 +290,18 @@ class VideoWorker(QThread):
                 if not ok:
                     break
 
-                boxes = self._detector.detect_boxes(frame, self._settings)
-                frame_buffer.append(frame)
-                boxes_buffer.append(boxes)
-                current_frame += 1
-
-                if len(frame_buffer) < self.TEMPORAL_WINDOW_SIZE:
-                    continue
-
-                stabilized_window = self._stabilize_window(boxes_buffer)
-                masked = self._detector.apply_mask(frame_buffer[0], stabilized_window[0])
+                detections = self._detector.detect_boxes_with_classes(frame, self._settings)
+                mask_boxes = self._mask_boxes_for_frame(current_frame, detections)
+                masked = self._detector.apply_mask(frame, mask_boxes)
                 out.write(masked)
 
                 processed += 1
                 self._emit_progress(processed, frames_to_process)
-                frame_buffer.pop(0)
-                boxes_buffer.pop(0)
+                current_frame += 1
 
             if not self._running:
                 self.status_changed.emit("Video processing stopped.")
                 return
-
-            while frame_buffer:
-                stabilized_window = self._stabilize_window(boxes_buffer)
-                masked = self._detector.apply_mask(frame_buffer[0], stabilized_window[0])
-                out.write(masked)
-
-                processed += 1
-                self._emit_progress(processed, frames_to_process)
-                frame_buffer.pop(0)
-                boxes_buffer.pop(0)
 
             self.progress_changed.emit(100)
             self.status_changed.emit("Video processing completed.")

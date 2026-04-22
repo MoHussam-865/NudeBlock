@@ -88,6 +88,7 @@ def detect_on_tile(tile_img: np.ndarray, session, input_name: str,
     -------
     boxes : list[[left, top, width, height]]
     scores : list[float]
+    class_ids : list[int]
     """
     tile_h, tile_w = tile_img.shape[:2]
     x_factor = tile_w / model_size
@@ -103,6 +104,7 @@ def detect_on_tile(tile_img: np.ndarray, session, input_name: str,
 
     boxes = []
     scores = []
+    class_ids = []
 
     for row in predictions:
         class_scores = row[4:]
@@ -121,8 +123,9 @@ def detect_on_tile(tile_img: np.ndarray, session, input_name: str,
 
         boxes.append([left, top, width, height])
         scores.append(max_score)
+        class_ids.append(class_id)
 
-    return boxes, scores
+    return boxes, scores, class_ids
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -134,23 +137,50 @@ def detect_tiled(frame: np.ndarray, session, input_name: str,
                  conf_thresh: float, iou_thresh: float,
                  screen_w: int, screen_h: int):
     """
-    Split *frame* into overlapping tiles, run inference on each, remap
-    detections to full-frame coordinates, and apply a global NMS pass.
+    Backward-compatible helper that returns boxes only.
 
     Returns
     -------
     list[tuple[int, int, int, int]]
         Final (x, y, w, h) bounding boxes clamped to screen bounds.
     """
+    detections = detect_tiled_with_classes(
+        frame,
+        session,
+        input_name,
+        model_size,
+        classes_set,
+        conf_thresh,
+        iou_thresh,
+        screen_w,
+        screen_h,
+    )
+    return [(bx, by, bw, bh) for (bx, by, bw, bh, _class_id) in detections]
+
+
+def detect_tiled_with_classes(frame: np.ndarray, session, input_name: str,
+                              model_size: int, classes_set: set,
+                              conf_thresh: float, iou_thresh: float,
+                              screen_w: int, screen_h: int):
+    """
+    Split *frame* into overlapping tiles, run inference on each, remap
+    detections to full-frame coordinates, and apply a global NMS pass.
+
+    Returns
+    -------
+    list[tuple[int, int, int, int, int]]
+        Final (x, y, w, h, class_id) detections clamped to screen bounds.
+    """
     img_h, img_w = frame.shape[:2]
     tiles = compute_tile_grid(img_w, img_h, model_size)
 
     all_boxes = []
     all_scores = []
+    all_class_ids = []
 
     for (tx, ty, tw, th) in tiles:
         tile_img = frame[ty:ty + th, tx:tx + tw]
-        boxes, scores = detect_on_tile(
+        boxes, scores, class_ids = detect_on_tile(
             tile_img, session, input_name,
             model_size, classes_set, conf_thresh,
         )
@@ -160,9 +190,10 @@ def detect_tiled(frame: np.ndarray, session, input_name: str,
             box[1] += ty
         all_boxes.extend(boxes)
         all_scores.extend(scores)
+        all_class_ids.extend(class_ids)
 
     # Global NMS to merge duplicates from overlapping tiles
-    final_boxes: list[tuple[int, int, int, int]] = []
+    final_boxes: list[tuple[int, int, int, int, int]] = []
     if all_boxes:
         indices = cv2.dnn.NMSBoxes(all_boxes, all_scores, conf_thresh, iou_thresh)
         if len(indices) > 0:
@@ -172,6 +203,7 @@ def detect_tiled(frame: np.ndarray, session, input_name: str,
                 by = max(0, by)
                 bw = min(bw, screen_w - bx)
                 bh = min(bh, screen_h - by)
-                final_boxes.append((bx, by, bw, bh))
+                if bw > 0 and bh > 0:
+                    final_boxes.append((bx, by, bw, bh, all_class_ids[i]))
 
     return final_boxes
