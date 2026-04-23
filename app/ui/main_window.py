@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+from dataclasses import replace
 from pathlib import Path
 import sys
 
@@ -42,6 +43,10 @@ from app.core.constants import (
     DEFAULT_CONF_THRESHOLD,
     DEFAULT_IOU_THRESHOLD,
     DEFAULT_SCREEN_SCANS_PER_SECOND,
+    DEFAULT_VIDEO_LARGE_OBJECT_CONFIDENCE,
+    DEFAULT_VIDEO_OBJECT_TRACKING_ENABLED,
+    DEFAULT_VIDEO_SIZE_CURVE_MAX_AREA_RATIO,
+    DEFAULT_VIDEO_SMALL_OBJECT_CONFIDENCE,
     NUDENET_CLASSES,
 )
 from app.core.settings import DetectionSettings, ScreenSettings
@@ -240,6 +245,37 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(trim_group)
 
+        advanced_group = QGroupBox("Advanced video detection (optional)")
+        advanced_form = QFormLayout(advanced_group)
+
+        self.video_tracking_checkbox = QCheckBox("Enable object tracking")
+        self.video_tracking_checkbox.setChecked(DEFAULT_VIDEO_OBJECT_TRACKING_ENABLED)
+        advanced_form.addRow("Object tracking", self.video_tracking_checkbox)
+
+        self.video_small_conf_spin = QDoubleSpinBox()
+        self.video_small_conf_spin.setRange(0.0, 1.0)
+        self.video_small_conf_spin.setSingleStep(0.01)
+        self.video_small_conf_spin.setDecimals(2)
+        self.video_small_conf_spin.setValue(DEFAULT_VIDEO_SMALL_OBJECT_CONFIDENCE)
+        advanced_form.addRow("Small-object min confidence", self.video_small_conf_spin)
+
+        self.video_large_conf_spin = QDoubleSpinBox()
+        self.video_large_conf_spin.setRange(0.0, 1.0)
+        self.video_large_conf_spin.setSingleStep(0.01)
+        self.video_large_conf_spin.setDecimals(2)
+        self.video_large_conf_spin.setValue(DEFAULT_VIDEO_LARGE_OBJECT_CONFIDENCE)
+        advanced_form.addRow("Max-object min confidence", self.video_large_conf_spin)
+
+        self.video_max_area_ratio_spin = QDoubleSpinBox()
+        self.video_max_area_ratio_spin.setRange(0.1, 100.0)
+        self.video_max_area_ratio_spin.setSingleStep(0.5)
+        self.video_max_area_ratio_spin.setDecimals(2)
+        self.video_max_area_ratio_spin.setSuffix("%")
+        self.video_max_area_ratio_spin.setValue(DEFAULT_VIDEO_SIZE_CURVE_MAX_AREA_RATIO * 100.0)
+        advanced_form.addRow("Middle boundary (% frame area)", self.video_max_area_ratio_spin)
+
+        layout.addWidget(advanced_group)
+
         actions = QHBoxLayout()
         self.video_start_btn = QPushButton("Start processing")
         self.video_start_btn.clicked.connect(self._start_video_processing)
@@ -320,6 +356,19 @@ class MainWindow(QMainWindow):
             show_labels_and_scores=self.show_labels_checkbox.isChecked(),
             selected_class_ids=selected,
         )
+
+    def _build_video_detection_settings(self) -> DetectionSettings:
+        base_settings = self._build_detection_settings()
+        video_settings = replace(
+            base_settings,
+            enable_video_size_confidence=True,
+            video_object_tracking=self.video_tracking_checkbox.isChecked(),
+            small_object_confidence=float(self.video_small_conf_spin.value()),
+            large_object_confidence=float(self.video_large_conf_spin.value()),
+            size_curve_max_area_ratio=float(self.video_max_area_ratio_spin.value()) / 100.0,
+        )
+        video_settings.validate()
+        return video_settings
 
     def _build_screen_settings(self) -> ScreenSettings:
         return ScreenSettings(scans_per_second=int(self.screen_rate_spin.value()))
@@ -438,7 +487,7 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            settings = self._build_detection_settings()
+            settings = self._build_video_detection_settings()
         except ValueError as exc:
             QMessageBox.warning(self, APP_NAME, str(exc))
             return

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import cv2
 from PyQt6.QtCore import QThread, pyqtSignal
@@ -286,7 +286,24 @@ class VideoWorker(QThread):
             if not out.isOpened():
                 raise RuntimeError(f"Could not open output video: {self._output_path}")
 
-            self.status_changed.emit("Processing video...")
+            detection_settings = self._settings
+            if self._settings.enable_video_size_confidence:
+                detection_settings = replace(
+                    self._settings,
+                    conf_threshold=self._detector.video_candidate_conf_threshold(self._settings),
+                )
+                tracking_state = "on" if self._settings.video_object_tracking else "off"
+                self.status_changed.emit(
+                    "Processing video... Size-aware confidence enabled "
+                    f"(small>={self._settings.small_object_confidence:.2f}, "
+                    f"large>={self._settings.large_object_confidence:.2f}, "
+                    f"middle={self._settings.size_curve_max_area_ratio * 100.0:.2f}%, "
+                    f"tracking={tracking_state})."
+                )
+            else:
+                tracking_state = "on" if self._settings.video_object_tracking else "off"
+                self.status_changed.emit(f"Processing video... tracking={tracking_state}.")
+
             processed = 0
             current_frame = start_frame
 
@@ -298,8 +315,25 @@ class VideoWorker(QThread):
                 if not ok:
                     break
 
-                detections = self._detector.detect_boxes_with_details(frame, self._settings)
-                mask_boxes, label_detections = self._mask_boxes_for_frame(current_frame, detections)
+                detections = self._detector.detect_boxes_with_details(frame, detection_settings)
+                if self._settings.enable_video_size_confidence:
+                    detections = self._detector.filter_video_detections_by_size_confidence(
+                        detections,
+                        width,
+                        height,
+                        self._settings,
+                    )
+
+                if self._settings.video_object_tracking:
+                    mask_boxes, label_detections = self._mask_boxes_for_frame(current_frame, detections)
+                else:
+                    self._tracks = []
+                    mask_boxes = [
+                        (bx, by, bw, bh)
+                        for (bx, by, bw, bh, _class_id, _score) in detections
+                    ]
+                    label_detections = list(detections)
+
                 masked = self._detector.apply_mask(frame, mask_boxes)
                 if self._settings.show_labels_and_scores:
                     frame_out = self._detector.draw_labels(masked, label_detections)

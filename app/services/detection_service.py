@@ -14,6 +14,8 @@ from archive.tiling import detect_tiled_with_details
 
 
 class DetectionService:
+    SCORE_COMPARE_EPSILON = 1e-4
+
     def __init__(self, model_path: str = MODEL_PATH, prefer_cuda: bool = True):
         providers = ort.get_available_providers()
         if prefer_cuda and "CUDAExecutionProvider" in providers:
@@ -66,6 +68,63 @@ class DetectionService:
             frame_w,
             frame_h,
         )
+
+    @staticmethod
+    def video_candidate_conf_threshold(settings: DetectionSettings) -> float:
+        if not settings.enable_video_size_confidence:
+            return settings.conf_threshold
+
+        return min(settings.small_object_confidence, settings.large_object_confidence)
+
+    @staticmethod
+    def _box_area_ratio(
+        box: tuple[int, int, int, int],
+        frame_w: int,
+        frame_h: int,
+    ) -> float:
+        frame_area = max(1, frame_w * frame_h)
+        box_area = max(0, box[2]) * max(0, box[3])
+        ratio = float(box_area / frame_area)
+        return min(1.0, max(0.0, ratio))
+
+    @staticmethod
+    def _size_aware_threshold_for_ratio(
+        area_ratio: float,
+        small_confidence: float,
+        large_confidence: float,
+        middle_area_ratio: float,
+    ) -> float:
+        # Step rule requested by user:
+        # - area < middle boundary uses small threshold
+        # - area >= middle boundary uses max threshold
+        if area_ratio >= middle_area_ratio:
+            return large_confidence
+        return small_confidence
+
+    def filter_video_detections_by_size_confidence(
+        self,
+        detections: Iterable[tuple[int, int, int, int, int, float]],
+        frame_w: int,
+        frame_h: int,
+        settings: DetectionSettings,
+    ) -> list[tuple[int, int, int, int, int, float]]:
+        detections_list = list(detections)
+        if not settings.enable_video_size_confidence:
+            return detections_list
+
+        accepted: list[tuple[int, int, int, int, int, float]] = []
+        for bx, by, bw, bh, class_id, score in detections_list:
+            area_ratio = self._box_area_ratio((bx, by, bw, bh), frame_w, frame_h)
+            required_score = self._size_aware_threshold_for_ratio(
+                area_ratio,
+                settings.small_object_confidence,
+                settings.large_object_confidence,
+                settings.size_curve_max_area_ratio,
+            )
+            if score + self.SCORE_COMPARE_EPSILON >= required_score:
+                accepted.append((bx, by, bw, bh, class_id, score))
+
+        return accepted
 
     @staticmethod
     def _scale_detections_from_center(
