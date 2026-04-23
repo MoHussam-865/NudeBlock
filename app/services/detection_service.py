@@ -160,18 +160,22 @@ class DetectionService:
         detections: Iterable[tuple[int, int, int, int, int, float]],
     ) -> np.ndarray:
         labeled = frame.copy()
+        frame_h, frame_w = labeled.shape[:2]
+        frame_area = max(1, frame_w * frame_h)
         font = cv2.FONT_HERSHEY_SIMPLEX
         font_scale = 0.45
         thickness = 1
         baseline_pad = 4
 
-        for bx, by, bw, _bh, class_id, score in detections:
+        for bx, by, bw, bh, class_id, score in detections:
             if class_id < 0 or class_id >= len(NUDENET_CLASSES):
                 label_name = f"class_{class_id}"
             else:
                 label_name = NUDENET_CLASSES[class_id]
 
-            text = f"{label_name} {score:.2f}"
+            box_area = max(0, bw) * max(0, bh)
+            area_ratio_pct = (box_area / frame_area) * 100.0
+            text = f"{label_name} {score:.2f} {area_ratio_pct:.2f}%"
             (text_w, text_h), baseline = cv2.getTextSize(text, font, font_scale, thickness)
 
             text_x = max(0, min(bx, labeled.shape[1] - text_w - 1))
