@@ -5,7 +5,7 @@ a = Analysis(
     ['run.py'],
     pathex=[],
     binaries=[],
-    datas=[('nudenet_v8.onnx', '.')],
+    datas=[],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

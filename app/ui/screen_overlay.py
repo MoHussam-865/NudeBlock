@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QRect, Qt
+from PyQt6.QtCore import QRect, Qt, QTimer
 from PyQt6.QtGui import QBrush, QColor, QPainter
 from PyQt6.QtWidgets import QWidget
+
+from app.core.constants import SCREEN_BOX_HOLD_FRAMES, SCREEN_OVERLAY_REFRESH_MS
 
 
 class ScreenOverlay(QWidget):
     def __init__(self, monitor: dict):
         super().__init__()
         self._boxes: list[tuple[int, int, int, int]] = []
+        self._empty_streak = 0
+        self._needs_repaint = False
 
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
@@ -27,12 +31,39 @@ class ScreenOverlay(QWidget):
             monitor["height"],
         )
 
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._flush_repaint)
+        self._timer.start(SCREEN_OVERLAY_REFRESH_MS)
+
     def set_boxes(self, boxes: list[tuple[int, int, int, int]]) -> None:
-        self._boxes = boxes
-        self.update()
+        if boxes:
+            self._empty_streak = 0
+            if boxes != self._boxes:
+                self._boxes = boxes
+                self._needs_repaint = True
+            return
+
+        if not self._boxes:
+            return
+
+        self._empty_streak += 1
+        if self._empty_streak >= SCREEN_BOX_HOLD_FRAMES:
+            self.clear_boxes()
 
     def clear_boxes(self) -> None:
+        self._empty_streak = 0
+        self._needs_repaint = False
+        if not self._boxes:
+            return
+
         self._boxes = []
+        self.update()
+
+    def _flush_repaint(self) -> None:
+        if not self._needs_repaint:
+            return
+
+        self._needs_repaint = False
         self.update()
 
     def paintEvent(self, _event) -> None:  # noqa: N802

@@ -8,6 +8,9 @@ DEFAULT_CONF_THRESHOLD = 0.25
 DEFAULT_IOU_THRESHOLD = 0.45
 DEFAULT_BOX_SCALE = 1.25
 DEFAULT_SCREEN_SCANS_PER_SECOND = 8
+SCREEN_OVERLAY_REFRESH_MS = 33
+SCREEN_BOX_HOLD_FRAMES = 8
+SCREEN_METRICS_REPORT_INTERVAL_MS = 2000
 # Enabled by default for video so size-based thresholds are used out of the box.
 DEFAULT_VIDEO_SIZE_AWARE_CONFIDENCE_ENABLED = True
 # Enabled by default so video keeps temporal confirmation and short mask-hold behavior.
