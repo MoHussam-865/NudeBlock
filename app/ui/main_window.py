@@ -62,7 +62,7 @@ class MainWindow(QMainWindow):
         super().__init__()
 
         self.setWindowTitle(f"{APP_NAME} Desktop")
-        self.resize(960, 680)
+        self.resize(1220, 760)
 
         self._detector = DetectionService()
         self._image_service = ImageService(self._detector)
@@ -70,6 +70,8 @@ class MainWindow(QMainWindow):
         self._video_worker: VideoWorker | None = None
         self._screen_worker: ScreenWorker | None = None
         self._screen_overlay: ScreenOverlay | None = None
+        self._screen_status_text = "Idle"
+        self._screen_metrics_text = ""
         self._allow_close = False
         self._tray_notice_shown = False
 
@@ -87,84 +89,106 @@ class MainWindow(QMainWindow):
         page.setContentsMargins(20, 20, 20, 20)
         page.setSpacing(16)
 
-        settings_group = QGroupBox("Detection Settings")
-        settings_layout = QHBoxLayout(settings_group)
+        content = QHBoxLayout()
+        content.setSpacing(18)
 
-        form_left = QFormLayout()
+        main_column = QVBoxLayout()
+        main_column.setSpacing(16)
+
+        settings_group = QGroupBox("Shared Detection Settings")
+        settings_layout = QFormLayout(settings_group)
+
         self.conf_spin = QDoubleSpinBox()
         self.conf_spin.setRange(0.0, 1.0)
         self.conf_spin.setSingleStep(0.01)
         self.conf_spin.setDecimals(2)
         self.conf_spin.setValue(DEFAULT_CONF_THRESHOLD)
-        form_left.addRow("Confidence threshold", self.conf_spin)
+        settings_layout.addRow("Confidence threshold", self.conf_spin)
 
         self.iou_spin = QDoubleSpinBox()
         self.iou_spin.setRange(0.0, 1.0)
         self.iou_spin.setSingleStep(0.01)
         self.iou_spin.setDecimals(2)
         self.iou_spin.setValue(DEFAULT_IOU_THRESHOLD)
-        form_left.addRow("IoU threshold", self.iou_spin)
+        settings_layout.addRow("IoU threshold", self.iou_spin)
 
         self.box_scale_spin = QSpinBox()
         self.box_scale_spin.setRange(100, 300)
         self.box_scale_spin.setSingleStep(25)
         self.box_scale_spin.setSuffix("%")
         self.box_scale_spin.setValue(int(DEFAULT_BOX_SCALE * 100))
-        form_left.addRow("Box scale", self.box_scale_spin)
+        settings_layout.addRow("Box scale", self.box_scale_spin)
 
-        self.screen_rate_spin = QSpinBox()
-        self.screen_rate_spin.setRange(1, 30)
-        self.screen_rate_spin.setValue(DEFAULT_SCREEN_SCANS_PER_SECOND)
-        form_left.addRow("Screen scans per second", self.screen_rate_spin)
+        shared_hint = QLabel(
+            "These settings apply to image, video, and live screen protection."
+        )
+        shared_hint.setWordWrap(True)
+        settings_layout.addRow(shared_hint)
 
-        self.show_labels_checkbox = QCheckBox("Show class label and score")
-        self.show_labels_checkbox.setChecked(True)
-        form_left.addRow("Video/Image labels", self.show_labels_checkbox)
-
-        settings_layout.addLayout(form_left, stretch=1)
-
-        class_panel = QVBoxLayout()
-        class_panel.addWidget(QLabel("Classes to block"))
-
-        self.classes_list = QListWidget()
-        self.classes_list.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
-        for class_id, label in enumerate(NUDENET_CLASSES):
-            item = QListWidgetItem(f"{class_id:02d}  {label}")
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(Qt.CheckState.Checked)
-            self.classes_list.addItem(item)
-        class_panel.addWidget(self.classes_list)
-
-        class_actions = QHBoxLayout()
-        self.select_all_btn = QPushButton("Select all")
-        self.select_all_btn.clicked.connect(self._select_all_classes)
-        class_actions.addWidget(self.select_all_btn)
-
-        self.clear_all_btn = QPushButton("Clear all")
-        self.clear_all_btn.clicked.connect(self._clear_all_classes)
-        class_actions.addWidget(self.clear_all_btn)
-
-        class_panel.addLayout(class_actions)
-        settings_layout.addLayout(class_panel, stretch=2)
-
-        page.addWidget(settings_group)
+        main_column.addWidget(settings_group)
 
         self.tabs = QTabWidget()
         self.tabs.addTab(self._build_image_tab(), "Secure Image")
         self.tabs.addTab(self._build_video_tab(), "Secure Video")
         self.tabs.addTab(self._build_screen_tab(), "Secure Screen")
-        page.addWidget(self.tabs)
+        main_column.addWidget(self.tabs, stretch=1)
+
+        content.addLayout(main_column, stretch=3)
+        content.addWidget(self._build_classes_panel(), stretch=2)
+
+        page.addLayout(content, stretch=1)
 
         self.footer_status = QLabel(f"Model provider: {self._detector.provider_name}")
         self.footer_status.setObjectName("footerStatus")
         self.footer_status.setAlignment(Qt.AlignmentFlag.AlignRight)
         page.addWidget(self.footer_status)
 
+    def _build_classes_panel(self) -> QGroupBox:
+        group = QGroupBox("Classes to block")
+        layout = QVBoxLayout(group)
+        layout.setSpacing(12)
+
+        hint = QLabel(
+            "These class selections apply to image, video, and secure screen."
+        )
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        self.classes_list = QListWidget()
+        self.classes_list.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.classes_list.setMinimumWidth(360)
+        self.classes_list.setMinimumHeight(520)
+        for class_id, label in enumerate(NUDENET_CLASSES):
+            item = QListWidgetItem(f"{class_id:02d}  {label}")
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Checked)
+            self.classes_list.addItem(item)
+        layout.addWidget(self.classes_list, stretch=1)
+
+        actions = QHBoxLayout()
+        self.select_all_btn = QPushButton("Select all")
+        self.select_all_btn.clicked.connect(self._select_all_classes)
+        actions.addWidget(self.select_all_btn)
+
+        self.clear_all_btn = QPushButton("Clear all")
+        self.clear_all_btn.clicked.connect(self._clear_all_classes)
+        actions.addWidget(self.clear_all_btn)
+
+        layout.addLayout(actions)
+        return group
+
     def _build_image_tab(self) -> QWidget:
         tab = QWidget()
         layout = QVBoxLayout(tab)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(16)
+
+        output_group = QGroupBox("Image output")
+        output_layout = QFormLayout(output_group)
+        self.image_labels_checkbox = QCheckBox("Draw class labels and scores on the saved image")
+        self.image_labels_checkbox.setChecked(True)
+        output_layout.addRow("Annotations", self.image_labels_checkbox)
+        layout.addWidget(output_group)
 
         input_row = QHBoxLayout()
         self.image_input_edit = QLineEdit()
@@ -203,6 +227,13 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(tab)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(16)
+
+        output_group = QGroupBox("Video output")
+        output_layout = QFormLayout(output_group)
+        self.video_labels_checkbox = QCheckBox("Draw class labels and scores on the processed video")
+        self.video_labels_checkbox.setChecked(True)
+        output_layout.addRow("Annotations", self.video_labels_checkbox)
+        layout.addWidget(output_group)
 
         input_row = QHBoxLayout()
         self.video_input_edit = QLineEdit()
@@ -303,6 +334,20 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(16)
 
+        capture_group = QGroupBox("Screen capture")
+        capture_form = QFormLayout(capture_group)
+        self.screen_rate_spin = QSpinBox()
+        self.screen_rate_spin.setRange(1, 30)
+        self.screen_rate_spin.setValue(DEFAULT_SCREEN_SCANS_PER_SECOND)
+        capture_form.addRow("Scans per second", self.screen_rate_spin)
+
+        capture_hint = QLabel(
+            "This option only affects live screen protection."
+        )
+        capture_hint.setWordWrap(True)
+        capture_form.addRow(capture_hint)
+        layout.addWidget(capture_group)
+
         actions = QHBoxLayout()
         self.screen_start_btn = QPushButton("Start secure screen")
         self.screen_start_btn.clicked.connect(self._start_screen_protection)
@@ -315,7 +360,8 @@ class MainWindow(QMainWindow):
 
         layout.addLayout(actions)
 
-        self.screen_status = QLabel("Idle")
+        self.screen_status = QLabel(self._screen_status_text)
+        self.screen_status.setWordWrap(True)
         layout.addWidget(self.screen_status)
 
         note = QLabel(
@@ -353,14 +399,21 @@ class MainWindow(QMainWindow):
             conf_threshold=float(self.conf_spin.value()),
             iou_threshold=float(self.iou_spin.value()),
             box_scale=float(self.box_scale_spin.value()) / 100.0,
-            show_labels_and_scores=self.show_labels_checkbox.isChecked(),
+            show_labels_and_scores=False,
             selected_class_ids=selected,
+        )
+
+    def _build_image_detection_settings(self) -> DetectionSettings:
+        return replace(
+            self._build_detection_settings(),
+            show_labels_and_scores=self.image_labels_checkbox.isChecked(),
         )
 
     def _build_video_detection_settings(self) -> DetectionSettings:
         base_settings = self._build_detection_settings()
         video_settings = replace(
             base_settings,
+            show_labels_and_scores=self.video_labels_checkbox.isChecked(),
             enable_video_size_confidence=True,
             video_object_tracking=self.video_tracking_checkbox.isChecked(),
             small_object_confidence=float(self.video_small_conf_spin.value()),
@@ -405,7 +458,7 @@ class MainWindow(QMainWindow):
 
     def _process_image(self) -> None:
         try:
-            settings = self._build_detection_settings()
+            settings = self._build_image_detection_settings()
         except ValueError as exc:
             QMessageBox.warning(self, APP_NAME, str(exc))
             return
@@ -582,10 +635,13 @@ class MainWindow(QMainWindow):
             screen_settings,
         )
         self._screen_worker.boxes_ready.connect(self._screen_overlay.set_boxes)
-        self._screen_worker.status_changed.connect(self.screen_status.setText)
+        self._screen_worker.status_changed.connect(self._on_screen_status_changed)
+        self._screen_worker.metrics_changed.connect(self._on_screen_metrics_changed)
         self._screen_worker.failed.connect(self._on_screen_failed)
         self._screen_worker.finished.connect(self._on_screen_finished)
 
+        self._set_screen_metrics("")
+        self._set_screen_status("Starting secure screen...")
         self._screen_worker.start()
         self.screen_start_btn.setEnabled(False)
         self.screen_stop_btn.setEnabled(True)
@@ -593,11 +649,18 @@ class MainWindow(QMainWindow):
 
     def _stop_screen_protection(self) -> None:
         if self._screen_worker is not None and self._screen_worker.isRunning():
-            self.screen_status.setText("Stopping secure screen...")
+            self._set_screen_status("Stopping secure screen...")
             self._screen_worker.stop()
 
+    def _on_screen_status_changed(self, message: str) -> None:
+        self._set_screen_status(message)
+
+    def _on_screen_metrics_changed(self, message: str) -> None:
+        self._set_screen_metrics(message)
+
     def _on_screen_failed(self, message: str) -> None:
-        self.screen_status.setText(f"Screen failed: {message}")
+        self._set_screen_metrics("")
+        self._set_screen_status(f"Screen failed: {message}")
         QMessageBox.critical(self, APP_NAME, message)
 
     def _on_screen_finished(self) -> None:
@@ -607,9 +670,24 @@ class MainWindow(QMainWindow):
             self._screen_overlay.deleteLater()
             self._screen_overlay = None
 
+        self._set_screen_metrics("")
         self.screen_start_btn.setEnabled(True)
         self.screen_stop_btn.setEnabled(False)
         self._update_tray_tooltip()
+
+    def _set_screen_status(self, message: str) -> None:
+        self._screen_status_text = message
+        self._refresh_screen_status_label()
+
+    def _set_screen_metrics(self, message: str) -> None:
+        self._screen_metrics_text = message
+        self._refresh_screen_status_label()
+
+    def _refresh_screen_status_label(self) -> None:
+        parts = [self._screen_status_text]
+        if self._screen_metrics_text:
+            parts.append(self._screen_metrics_text)
+        self.screen_status.setText(" | ".join(part for part in parts if part))
 
     def _exclude_overlay_from_capture(self) -> None:
         if sys.platform != "win32" or self._screen_overlay is None:
